@@ -1,0 +1,16 @@
+# Python cache & build files
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# OS temporary files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment files
+.env
+.venv
+env/
+venv/

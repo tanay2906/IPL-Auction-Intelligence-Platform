@@ -1,0 +1,242 @@
+// ============================================================================
+// IPL FRANCHISE AUCTION INTELLIGENCE & PLAYER VALUATION PLATFORM
+// MODULE 4.2: PRODUCTION DAX MEASURE LIBRARY
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// 1. DATE TABLE GENERATION (CALENDAR DIMENSION)
+// ----------------------------------------------------------------------------
+dim_calendar = 
+VAR MinDate = MIN(dim_matches[match_date])
+VAR MaxDate = MAX(dim_matches[match_date])
+RETURN
+    ADDCOLUMNS(
+        CALENDAR(MinDate, MaxDate),
+        "Year", YEAR([Date]),
+        "Month Number", MONTH([Date]),
+        "Month Name", FORMAT([Date], "MMMM"),
+        "Quarter", "Q" & FORMAT([Date], "Q"),
+        "Day of Week", FORMAT([Date], "dddd")
+    )
+
+
+// ----------------------------------------------------------------------------
+// 2. CORE BATTING MEASURES
+// ----------------------------------------------------------------------------
+
+// Total Runs Scored by Batter
+Total Runs = 
+SUM(fact_deliveries[runs_off_bat])
+
+// Legal Deliveries Faced by Batter (Excluding Wides)
+Balls Faced = 
+CALCULATE(
+    COUNTROWS(fact_deliveries),
+    fact_deliveries[wides] = 0
+)
+
+// Dynamic Batting Strike Rate (Adapts to any Slicer / Phase filter)
+Dynamic Strike Rate = 
+VAR TotalRunsOffBat = [Total Runs]
+VAR LegalBalls = [Balls Faced]
+RETURN 
+    DIVIDE(TotalRunsOffBat, LegalBalls, 0) * 100
+
+// Batting Dot Ball %
+Batting Dot Ball % = 
+VAR DotBalls = 
+    CALCULATE(
+        COUNTROWS(fact_deliveries),
+        fact_deliveries[runs_off_bat] = 0,
+        fact_deliveries[wides] = 0
+    )
+RETURN 
+    DIVIDE(DotBalls, [Balls Faced], 0) * 100
+
+// Boundary Percentage (% of runs from 4s and 6s)
+Boundary Run % = 
+VAR BoundaryRuns = 
+    CALCULATE(
+        SUM(fact_deliveries[runs_off_bat]),
+        fact_deliveries[runs_off_bat] IN {4, 6}
+    )
+RETURN 
+    DIVIDE(BoundaryRuns, [Total Runs], 0) * 100
+
+
+// ----------------------------------------------------------------------------
+// 3. CORE BOWLING MEASURES (ACTIVATING INACTIVE RELATIONSHIP VIA USERELATIONSHIP)
+// ----------------------------------------------------------------------------
+
+// Total Bowler Runs Conceded (Excluding Byes and Leg-Byes)
+Total Runs Conceded = 
+CALCULATE(
+    SUM(fact_deliveries[runs_off_bat]) + SUM(fact_deliveries[wides]) + SUM(fact_deliveries[noballs]),
+    USERELATIONSHIP(dim_player_registry[cricsheet_name], fact_deliveries[bowler])
+)
+
+// Total Legal Deliveries Bowled
+Legal Deliveries Bowled = 
+CALCULATE(
+    COUNTROWS(fact_deliveries),
+    fact_deliveries[wides] = 0,
+    fact_deliveries[noballs] = 0,
+    USERELATIONSHIP(dim_player_registry[cricsheet_name], fact_deliveries[bowler])
+)
+
+// Legitimate Bowler Wickets
+Total Wickets = 
+CALCULATE(
+    COUNTROWS(fact_deliveries),
+    fact_deliveries[is_wicket] = 1,
+    NOT(fact_deliveries[dismissal_kind] IN {"run out", "retired hurt", "retired out", "obstructing the field"}),
+    USERELATIONSHIP(dim_player_registry[cricsheet_name], fact_deliveries[bowler])
+)
+
+// True Economy Rate
+True Economy Rate = 
+VAR OversBowled = DIVIDE([Legal Deliveries Bowled], 6, 0)
+RETURN
+    DIVIDE([Total Runs Conceded], OversBowled, BLANK())
+
+// Bowling Strike Rate (Legal balls per wicket)
+Bowling Strike Rate = 
+DIVIDE([Legal Deliveries Bowled], [Total Wickets], BLANK())
+
+
+// ----------------------------------------------------------------------------
+// 4. PHASE-SPECIFIC LEVERAGE MEASURES
+// ----------------------------------------------------------------------------
+
+// Powerplay Strike Rate (Overs 0 to 5)
+Powerplay Strike Rate = 
+CALCULATE(
+    [Dynamic Strike Rate],
+    fact_deliveries[over] >= 0 && fact_deliveries[over] <= 5
+)
+
+// Death Overs Strike Rate (Overs 15 to 19)
+Death Strike Rate = 
+CALCULATE(
+    [Dynamic Strike Rate],
+    fact_deliveries[over] >= 15 && fact_deliveries[over] <= 19
+)
+
+// Death Overs Economy Rate
+Death Economy Rate = 
+CALCULATE(
+    [True Economy Rate],
+    fact_deliveries[over] >= 15 && fact_deliveries[over] <= 19
+)
+
+// Death Overs Dot Ball %
+Death Dot Ball % = 
+VAR DeathDots = 
+    CALCULATE(
+        COUNTROWS(fact_deliveries),
+        fact_deliveries[over] >= 15 && fact_deliveries[over] <= 19,
+        fact_deliveries[runs_off_bat] = 0,
+        fact_deliveries[wides] = 0,
+        fact_deliveries[noballs] = 0,
+        USERELATIONSHIP(dim_player_registry[cricsheet_name], fact_deliveries[bowler])
+    )
+VAR DeathBalls = 
+    CALCULATE(
+        [Legal Deliveries Bowled],
+        fact_deliveries[over] >= 15 && fact_deliveries[over] <= 19
+    )
+RETURN 
+    DIVIDE(DeathDots, DeathBalls, 0) * 100
+
+
+// ----------------------------------------------------------------------------
+// 5. FINANCIAL UNIT ECONOMICS & VALUATION SEGMENTATION
+// ----------------------------------------------------------------------------
+
+// Total Contract Price in INR Crores
+Player Sold Price Cr = 
+SELECTEDVALUE(dim_auction_prices[sold_price_inr_cr])
+
+// Cost Per Run Scored (in INR ₹)
+Cost Per Run INR = 
+VAR SoldPriceAbsolute = [Player Sold Price Cr] * 10000000
+RETURN 
+    DIVIDE(SoldPriceAbsolute, [Total Runs], BLANK())
+
+// Cost Per Wicket Taken (in INR ₹)
+Cost Per Wicket INR = 
+VAR SoldPriceAbsolute = [Player Sold Price Cr] * 10000000
+RETURN 
+    DIVIDE(SoldPriceAbsolute, [Total Wickets], BLANK())
+
+// Strategic Value Buy Flag (Multi-tier conditional segmentation)
+Value Buy Flag = 
+VAR Price = [Player Sold Price Cr]
+VAR Runs = [Total Runs]
+VAR Wkts = [Total Wickets]
+VAR D_SR = [Death Strike Rate]
+
+RETURN
+SWITCH(
+    TRUE(),
+    // Steal Buys: Low cost, high impact
+    (Runs >= 300 || Wkts >= 12) && Price <= 2.00, "Steal Buy",
+    
+    // Fair Value: Solid return commensurate with investment
+    (Runs >= 400 || Wkts >= 15) && Price > 2.00 && Price <= 8.00, "Fair Value",
+    
+    // Overpriced: Heavy cap consumption with mediocre output
+    (Runs < 250 && Wkts < 8) && Price >= 8.00, "Overpriced",
+    
+    // Scouting Targets: Specialized emerging talents
+    D_SR >= 170.0 && Price <= 1.00, "Scouting Target",
+    
+    "Bench Depth"
+)
+
+
+// ----------------------------------------------------------------------------
+// 6. ROLLING FORM TREND (LAST 3 MATCHES)
+// ----------------------------------------------------------------------------
+Rolling 3-Match Strike Rate = 
+VAR CurrentMatchDate = MAX(dim_matches[match_date])
+VAR CurrentPlayer = SELECTEDVALUE(dim_player_registry[cricsheet_name])
+VAR Last3Matches = 
+    TOPN(
+        3,
+        FILTER(
+            ALL(dim_matches),
+            dim_matches[match_date] <= CurrentMatchDate &&
+            CALCULATE(COUNTROWS(fact_deliveries), fact_deliveries[batter] = CurrentPlayer) > 0
+        ),
+        dim_matches[match_date],
+        DESC
+    )
+VAR RollingRuns = 
+    CALCULATE(
+        [Total Runs],
+        KEEPFILTERS(Last3Matches),
+        fact_deliveries[batter] = CurrentPlayer
+    )
+VAR RollingBalls = 
+    CALCULATE(
+        [Balls Faced],
+        KEEPFILTERS(Last3Matches),
+        fact_deliveries[batter] = CurrentPlayer
+    )
+RETURN
+    DIVIDE(RollingRuns, RollingBalls, 0) * 100
+
+
+// ----------------------------------------------------------------------------
+// 7. WHAT-IF SALARY CAP SIMULATION MEASURE
+// ----------------------------------------------------------------------------
+Simulated Cap Utilization % = 
+VAR SimulatedCap = SELECTEDVALUE('Salary Cap Parameter'[Salary Cap Parameter Value], 100.0)
+VAR TotalSpend = 
+    CALCULATE(
+        SUM(dim_auction_prices[sold_price_inr_cr]),
+        ALLSELECTED(dim_auction_prices)
+    )
+RETURN 
+    DIVIDE(TotalSpend, SimulatedCap, 0)

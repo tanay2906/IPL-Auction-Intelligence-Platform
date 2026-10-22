@@ -1510,21 +1510,35 @@ with tab_excel:
     st.markdown("#### 📥 Enterprise Excel Workbooks & Clean Datasets")
     st.caption("Download the complete multi-tab Microsoft Excel workbook or modular CSV dimension/fact tables:")
     
-    d_col1, d_col2, d_col3, d_col4, d_col5 = st.columns(5)
+    col_wb1, col_wb2, col_wb3 = st.columns(3)
     excel_file_path = os.path.join(BASE_DIR, "excel", "IPL_Auction_Intelligence_Model.xlsx")
-    if os.path.exists(excel_file_path):
-        with open(excel_file_path, "rb") as f:
-            excel_bytes = f.read()
-        with d_col1:
+    deliv_file_path = os.path.join(BASE_DIR, "excel", "IPL_Ball_By_Ball_Deliveries_2022_2025.xlsx")
+    
+    with col_wb1:
+        if os.path.exists(excel_file_path):
+            with open(excel_file_path, "rb") as f:
+                excel_bytes = f.read()
             st.download_button(
-                label="📊 Master .XLSX Model",
+                label="📊 Master Financial Model (.xlsx)",
                 data=excel_bytes,
                 file_name="IPL_Auction_Intelligence_Model.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Multi-sheet Microsoft Excel workbook containing Executive Summary, Scouting Mart, Player Registry, and Auction Contracts."
+                help="Multi-sheet Microsoft Excel model containing Executive Summary, Scouting Mart, Player Registry, Auction Contracts, and Salary Caps with dynamic formulas."
             )
             
-    with d_col2:
+    with col_wb2:
+        if os.path.exists(deliv_file_path):
+            with open(deliv_file_path, "rb") as f:
+                deliv_bytes = f.read()
+            st.download_button(
+                label="⚾ Ball-by-Ball Deliveries (.xlsx)",
+                data=deliv_bytes,
+                file_name="IPL_Ball_By_Ball_Deliveries_2022_2025.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Complete Microsoft Excel workbook with 87,690 delivery-level rows and match metadata (6.0 MB)."
+            )
+
+    with col_wb3:
         if os.path.exists(DB_PATH):
             with open(DB_PATH, "rb") as f:
                 db_bytes = f.read()
@@ -1533,18 +1547,19 @@ with tab_excel:
                 data=db_bytes,
                 file_name="ipl_auction_intelligence.db",
                 mime="application/x-sqlite3",
-                help="Download the entire 16.8MB SQLite relational data warehouse containing all 87k+ deliveries, player registry, contracts, and analytical views."
+                help="Download the entire 16.8MB SQLite relational data warehouse containing all tables and views."
             )
 
-    with d_col3:
+    c_csv1, c_csv2, c_csv3 = st.columns(3)
+    with c_csv1:
         reg_csv = df_registry.to_csv(index=False).encode('utf-8')
         st.download_button("👥 Player Registry (CSV)", data=reg_csv, file_name="dim_player_registry.csv", mime="text/csv", help="Clean dimension table with canonical player names, roles, and career timelines.")
         
-    with d_col4:
+    with c_csv2:
         mart_csv = df_mart.to_csv(index=False).encode('utf-8')
         st.download_button("🏏 Scouting Mart (CSV)", data=mart_csv, file_name="vw_scouting_master_mart.csv", mime="text/csv", help="Full analytical mart with financial KPIs, runs, wickets, and valuation tiers.")
         
-    with d_col5:
+    with c_csv3:
         conn = sqlite3.connect(DB_PATH)
         df_auc_down = pd.read_sql_query("SELECT * FROM dim_auction_prices", conn)
         conn.close()
